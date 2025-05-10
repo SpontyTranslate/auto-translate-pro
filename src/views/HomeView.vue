@@ -1,19 +1,195 @@
 <template>
   <div class="home">
-    <h1>AutoTranslate Pro</h1>
-    <p>Traduci i sottotitoli dei tuoi video YouTube preferiti per €1 per video</p>
+    <h2>Traduci i sottotitoli dei tuoi video YouTube</h2>
+    <div class="input-container">
+      <input 
+        type="text" 
+        v-model="videoUrl" 
+        placeholder="Incolla l'URL di un video YouTube" 
+        @keyup.enter="processVideo"
+      />
+      <button @click="processVideo" :disabled="!isValidUrl || loading">
+        {{ loading ? 'Elaborazione...' : 'Traduci' }}
+      </button>
+    </div>
     
-    <VideoInput />
+    <div v-if="error" class="error">{{ error }}</div>
+    
+    <!-- Player YouTube -->
+    <div v-if="videoId" class="video-container">
+      <h3>Video</h3>
+      <iframe 
+        :src="'https://www.youtube.com/embed/' + videoId" 
+        frameborder="0" 
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+        allowfullscreen
+      ></iframe>
+      
+      <!-- Menu di selezione lingua -->
+      <div class="language-selector">
+        <label for="language">Lingua di traduzione:</label>
+        <select id="language" v-model="targetLanguage" @change="translateSubtitles">
+          <option value="en">Inglese</option>
+          <option value="es">Spagnolo</option>
+          <option value="it">Italiano</option>
+        </select>
+      </div>
+      
+      <!-- Area sottotitoli -->
+      <div class="subtitles-container">
+        <h3>Sottotitoli {{ originalSubtitles.length ? '- ' + languages[targetLanguage] : '' }}</h3>
+        
+        <div v-if="subtitlesLoading" class="loading">
+          <p>Elaborazione sottotitoli...</p>
+        </div>
+        
+        <div v-else-if="!originalSubtitles.length" class="cta-container">
+          <p>Per visualizzare i sottotitoli di questo video</p>
+          <button @click="extractSubtitles" :disabled="extractingSubtitles">
+            {{ extractingSubtitles ? 'Estrazione in corso...' : 'Estrai sottotitoli' }}
+          </button>
+        </div>
+        
+        <div v-else-if="translatedSubtitles.length" class="subtitles-list">
+          <!-- Mostriamo i sottotitoli originali e tradotti -->
+          <div v-for="(subtitle, index) in translatedSubtitles" :key="index" class="subtitle-item">
+            <div class="subtitle-time">{{ formatTime(subtitle.start) }} - {{ formatTime(subtitle.end) }}</div>
+            <div class="subtitle-original">{{ originalSubtitles[index]?.text }}</div>
+            <div class="subtitle-translated">{{ subtitle.text }}</div>
+          </div>
+          
+          <div class="download-container">
+            <button class="download-button" @click="downloadSubtitles">
+              Scarica sottotitoli in formato SRT
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
-import VideoInput from '@/components/VideoInput.vue'
+import youtubeService from '@/services/youtubeService';
+import subtitleService from '@/services/subtitleService';
+import translationService from '@/services/translationService';
 
 export default {
   name: 'HomeView',
-  components: {
-    VideoInput
+  data() {
+    return {
+      videoUrl: '',
+      videoId: null,
+      error: null,
+      loading: false,
+      subtitlesLoading: false,
+      extractingSubtitles: false,
+      originalSubtitles: [],
+      translatedSubtitles: [],
+      targetLanguage: 'en', // Default: inglese
+      languages: {
+        'en': 'Inglese',
+        'es': 'Spagnolo',
+        'it': 'Italiano'
+      }
+    }
+  },
+  computed: {
+    isValidUrl() {
+      return !!this.videoUrl && youtubeService.getVideoIdFromUrl(this.videoUrl) !== null;
+    }
+  },
+  methods: {
+    processVideo() {
+      if (!this.isValidUrl) {
+        this.error = 'Per favore inserisci un URL YouTube valido';
+        return;
+      }
+      
+      this.error = null;
+      this.loading = true;
+      this.originalSubtitles = [];
+      this.translatedSubtitles = [];
+      
+      try {
+        this.videoId = youtubeService.getVideoIdFromUrl(this.videoUrl);
+        // Avvia automaticamente l'estrazione dei sottotitoli
+        this.extractSubtitles();
+      } catch (err) {
+        this.error = 'Si è verificato un errore: ' + err.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    
+    async extractSubtitles() {
+      this.extractingSubtitles = true;
+      this.subtitlesLoading = true;
+      this.error = null;
+      
+      try {
+        const subtitles = await subtitleService.getSubtitlesForVideo(this.videoId);
+        
+        if (!subtitles || subtitles.length === 0) {
+          throw new Error('Nessun sottotitolo disponibile per questo video');
+        }
+        
+        this.originalSubtitles = [...subtitles];
+        await this.translateSubtitles();
+      } catch (err) {
+        this.error = 'Errore nell\'estrazione sottotitoli: ' + err.message;
+      } finally {
+        this.extractingSubtitles = false;
+        this.subtitlesLoading = false;
+      }
+    },
+    
+    async translateSubtitles() {
+      if (!this.originalSubtitles.length) return;
+      
+      this.subtitlesLoading = true;
+      this.error = null;
+      
+      try {
+        const translated = await translationService.translateSubtitles(
+          this.originalSubtitles, 
+          this.targetLanguage
+        );
+        
+        this.translatedSubtitles = translated;
+      } catch (err) {
+        this.error = 'Errore nella traduzione: ' + err.message;
+      } finally {
+        this.subtitlesLoading = false;
+      }
+    },
+    
+    formatTime(seconds) {
+      const date = new Date(0);
+      date.setSeconds(seconds);
+      return date.toISOString().substr(11, 8);
+    },
+    
+    downloadSubtitles() {
+      if (!this.translatedSubtitles.length) return;
+      
+      let content = '';
+      this.translatedSubtitles.forEach((subtitle, index) => {
+        content += `${index + 1}\n`;
+        content += `${this.formatTime(subtitle.start)} --> ${this.formatTime(subtitle.end)}\n`;
+        content += `${subtitle.text}\n\n`;
+      });
+      
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sottotitoli_${this.videoId}_${this.targetLanguage}.srt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   }
 }
 </script>
@@ -21,15 +197,116 @@ export default {
 <style scoped>
 .home {
   text-align: center;
+  max-width: 800px;
+  margin: 0 auto;
   padding: 20px;
 }
 
-h1 {
-  margin-bottom: 10px;
+.input-container {
+  display: flex;
+  margin: 20px 0;
 }
 
-p {
+input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px 0 0 4px;
+}
+
+button {
+  padding: 10px 20px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.error {
+  color: red;
+  margin: 10px 0;
+  padding: 10px;
+  background-color: #ffebee;
+  border-radius: 4px;
+}
+
+.video-container {
+  margin-top: 30px;
+  border: 1px solid #ddd;
+  padding: 15px;
+  border-radius: 4px;
+}
+
+iframe {
+  width: 100%;
+  height: 450px;
+  margin: 15px 0;
+}
+
+.language-selector {
+  margin: 15px 0;
+  text-align: left;
+}
+
+.language-selector select {
+  padding: 8px;
+  border-radius: 4px;
+  margin-left: 10px;
+}
+
+.subtitles-container {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f5f5f5;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.loading {
+  text-align: center;
+  padding: 20px;
+}
+
+.subtitle-item {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ddd;
+}
+
+.subtitle-time {
+  font-size: 0.8em;
   color: #666;
-  margin-bottom: 30px;
+  margin-bottom: 5px;
+}
+
+.subtitle-original {
+  margin-bottom: 5px;
+  font-style: italic;
+  color: #666;
+}
+
+.subtitle-translated {
+  font-weight: bold;
+}
+
+.download-container {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.download-button {
+  background-color: #2196F3;
+  border-radius: 4px;
+}
+
+.cta-container {
+  text-align: center;
+  padding: 20px;
 }
 </style>
