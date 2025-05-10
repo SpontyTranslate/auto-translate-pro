@@ -4,16 +4,32 @@
 // Nota: Questo file dovrebbe essere posizionato nella cartella 'api' nella root del progetto
 
 // Per test locali, dobbiamo installare queste dipendenze:
-// npm install youtube-transcript-api cors
+// npm install youtube-transcript cors
 
-const { YoutubeTranscript } = require('youtube-transcript-api');
+const YoutubeTranscript = require('youtube-transcript');
+const cors = require('cors');
+
+// Funzione helper per gestire CORS
+const runMiddleware = (req, res, fn) => {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+};
+
+// Configurazione CORS
+const corsHandler = cors({
+  methods: ['GET', 'HEAD', 'OPTIONS'],
+  origin: '*',
+});
 
 module.exports = async (req, res) => {
-  // Imposta header CORS
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  // Gestisci CORS
+  await runMiddleware(req, res, corsHandler);
 
   // Gestisci preflight requests
   if (req.method === 'OPTIONS') {
@@ -33,7 +49,7 @@ module.exports = async (req, res) => {
 
   try {
     // Ottieni i sottotitoli
-    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+    const transcriptItems = await YoutubeTranscript.default.fetchTranscript(videoId);
 
     // Formatta i sottotitoli in un formato più usabile
     const subtitles = transcriptItems.map(item => ({
@@ -51,7 +67,7 @@ module.exports = async (req, res) => {
     console.error(`Errore nell'estrazione sottotitoli per ${videoId}:`, error);
 
     // Se non sono disponibili sottotitoli, restituisci un errore specifico
-    if (error.message.includes('Could not find any transcripts')) {
+    if (error.message && error.message.includes('Could not find any transcripts')) {
       return res.status(404).json({
         success: false,
         error: 'Nessun sottotitolo disponibile per questo video',
@@ -63,7 +79,7 @@ module.exports = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Errore durante l\'estrazione dei sottotitoli',
-      details: error.message
+      details: error.message || 'Unknown error'
     });
   }
 };
