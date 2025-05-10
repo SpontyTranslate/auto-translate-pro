@@ -28,10 +28,12 @@
       <!-- Menu di selezione lingua -->
       <div class="language-selector">
         <label for="language">Lingua di traduzione:</label>
-        <select id="language" v-model="targetLanguage" @change="translateSubtitles">
+        <select id="language" v-model="targetLanguage" @change="languageChanged">
           <option value="en">Inglese</option>
           <option value="es">Spagnolo</option>
           <option value="it">Italiano</option>
+          <option value="fr">Francese</option>
+          <option value="de">Tedesco</option>
         </select>
       </div>
       
@@ -41,6 +43,7 @@
         
         <div v-if="subtitlesLoading" class="loading">
           <p>Elaborazione sottotitoli...</p>
+          <div class="loading-spinner"></div>
         </div>
         
         <div v-else-if="!originalSubtitles.length" class="cta-container">
@@ -66,6 +69,25 @@
         </div>
       </div>
     </div>
+    
+    <!-- Libreria dei video salvati -->
+    <div v-if="Object.keys(savedVideos).length > 0" class="saved-videos">
+      <h3>I tuoi video tradotti</h3>
+      <div class="videos-grid">
+        <div v-for="(video, key) in savedVideos" :key="key" class="saved-video-item">
+          <div class="video-thumbnail">
+            <img :src="`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`" :alt="video.title">
+          </div>
+          <div class="video-info">
+            <h4>{{ video.title }}</h4>
+            <p>Lingua: {{ languages[video.language] }}</p>
+            <button @click="loadSavedVideo(video.id, video.language)">
+              Visualizza
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -73,6 +95,7 @@
 import youtubeService from '@/services/youtubeService';
 import subtitleService from '@/services/subtitleService';
 import translationService from '@/services/translationService';
+import localStorageService from '@/services/localStorageService';
 
 export default {
   name: 'HomeView',
@@ -80,6 +103,7 @@ export default {
     return {
       videoUrl: '',
       videoId: null,
+      videoTitle: '',
       error: null,
       loading: false,
       subtitlesLoading: false,
@@ -90,8 +114,11 @@ export default {
       languages: {
         'en': 'Inglese',
         'es': 'Spagnolo',
-        'it': 'Italiano'
-      }
+        'it': 'Italiano',
+        'fr': 'Francese',
+        'de': 'Tedesco'
+      },
+      savedVideos: {}
     }
   },
   computed: {
@@ -100,7 +127,7 @@ export default {
     }
   },
   methods: {
-    processVideo() {
+    async processVideo() {
       if (!this.isValidUrl) {
         this.error = 'Per favore inserisci un URL YouTube valido';
         return;
@@ -108,13 +135,24 @@ export default {
       
       this.error = null;
       this.loading = true;
-      this.originalSubtitles = [];
-      this.translatedSubtitles = [];
       
       try {
-        this.videoId = youtubeService.getVideoIdFromUrl(this.videoUrl);
-        // Avvia automaticamente l'estrazione dei sottotitoli
-        this.extractSubtitles();
+        // Estrai ID video
+        const videoId = youtubeService.getVideoIdFromUrl(this.videoUrl);
+        
+        // Verifica se abbiamo già tradotto questo video
+        if (localStorageService.isVideoTranslated(videoId, this.targetLanguage)) {
+          // Carica i sottotitoli salvati
+          this.loadSavedVideo(videoId, this.targetLanguage);
+        } else {
+          // Inizializza per nuova traduzione
+          this.videoId = videoId;
+          this.originalSubtitles = [];
+          this.translatedSubtitles = [];
+          
+          // Avvia automaticamente l'estrazione dei sottotitoli
+          await this.extractSubtitles();
+        }
       } catch (err) {
         this.error = 'Si è verificato un errore: ' + err.message;
       } finally {
@@ -136,6 +174,16 @@ export default {
         
         this.originalSubtitles = [...subtitles];
         await this.translateSubtitles();
+        
+        // Simula che il video è stato "pagato" (per la demo)
+        // In una versione reale, questo avverrebbe dopo il pagamento
+        localStorageService.simulatePayment(this.videoId);
+        
+        // Salva i sottotitoli tradotti
+        this.saveTranslatedSubtitles();
+        
+        // Aggiorna la lista dei video salvati
+        this.loadSavedVideos();
       } catch (err) {
         this.error = 'Errore nell\'estrazione sottotitoli: ' + err.message;
       } finally {
@@ -164,6 +212,20 @@ export default {
       }
     },
     
+    async languageChanged() {
+      // Verifica se abbiamo già tradotto questo video in questa lingua
+      if (this.videoId && localStorageService.isVideoTranslated(this.videoId, this.targetLanguage)) {
+        // Carica i sottotitoli salvati
+        this.loadSavedVideo(this.videoId, this.targetLanguage);
+      } else if (this.originalSubtitles.length > 0) {
+        // Traduci i sottotitoli nella nuova lingua
+        await this.translateSubtitles();
+        
+        // Salva i nuovi sottotitoli tradotti
+        this.saveTranslatedSubtitles();
+      }
+    },
+    
     formatTime(seconds) {
       const date = new Date(0);
       date.setSeconds(seconds);
@@ -189,7 +251,57 @@ export default {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    },
+    
+    saveTranslatedSubtitles() {
+      if (!this.videoId || !this.translatedSubtitles.length) return;
+      
+      // Ottieni il titolo del video (usiamo un mock per ora)
+      const videoTitle = this.videoTitle || `Video ${this.videoId}`;
+      
+      // Salva i sottotitoli tradotti
+      localStorageService.saveTranslatedVideo(
+        this.videoId,
+        videoTitle,
+        this.targetLanguage,
+        this.translatedSubtitles
+      );
+    },
+    
+    loadSavedVideos() {
+      this.savedVideos = localStorageService.getSavedVideos();
+    },
+    
+    loadSavedVideo(videoId, language) {
+      try {
+        // Imposta l'ID video
+        this.videoId = videoId;
+        
+        // Imposta la lingua
+        this.targetLanguage = language;
+        
+        // Carica i sottotitoli originali e tradotti
+        const savedSubtitles = localStorageService.getTranslatedSubtitles(videoId, language);
+        
+        if (savedSubtitles) {
+          // Assumiamo che i sottotitoli originali siano gli stessi
+          // In una versione reale, avresti i sottotitoli originali salvati separatamente
+          this.originalSubtitles = savedSubtitles.map(subtitle => ({
+            ...subtitle,
+            text: subtitle.text // Per ora, usiamo lo stesso testo (per semplicità)
+          }));
+          
+          this.translatedSubtitles = savedSubtitles;
+        }
+      } catch (error) {
+        console.error('Errore nel caricamento del video salvato:', error);
+        this.error = 'Impossibile caricare il video salvato';
+      }
     }
+  },
+  mounted() {
+    // Carica i video salvati all'avvio
+    this.loadSavedVideos();
   }
 }
 </script>
@@ -273,6 +385,21 @@ iframe {
   padding: 20px;
 }
 
+.loading-spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top-color: #4CAF50;
+  animation: spin 1s ease-in-out infinite;
+  margin: 10px auto;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .subtitle-item {
   margin-bottom: 15px;
   padding-bottom: 10px;
@@ -302,6 +429,54 @@ iframe {
 
 .download-button {
   background-color: #2196F3;
+  border-radius: 4px;
+}
+
+/* Stili per i video salvati */
+.saved-videos {
+  margin-top: 40px;
+  border-top: 1px solid #ddd;
+  padding-top: 20px;
+}
+
+.videos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.saved-video-item {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.video-thumbnail img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.video-info {
+  padding: 10px;
+}
+
+.video-info h4 {
+  margin: 0 0 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-info p {
+  margin: 0 0 10px;
+  font-size: 0.9em;
+  color: #666;
+}
+
+.video-info button {
+  width: 100%;
   border-radius: 4px;
 }
 
