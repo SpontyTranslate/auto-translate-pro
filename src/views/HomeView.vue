@@ -41,22 +41,28 @@
       <div class="subtitles-container">
         <h3>Sottotitoli {{ subtitles.length ? '- ' + languages[targetLanguage] : '' }}</h3>
         
-        <div v-if="loading" class="loading">
+        <div v-if="subtitlesLoading" class="loading">
           <p>Elaborazione sottotitoli...</p>
+          <div class="loading-spinner"></div>
         </div>
         
-        <div v-else-if="!subtitles.length" class="cta-container">
+        <div v-else-if="!originalSubtitles.length" class="cta-container">
           <p>Per visualizzare i sottotitoli di questo video</p>
-          <button @click="extractSubtitles" :disabled="loading">
-            {{ loading ? 'Estrazione in corso...' : 'Estrai sottotitoli' }}
+          <button @click="extractSubtitles" :disabled="extractingSubtitles">
+            {{ extractingSubtitles ? 'Estrazione in corso...' : 'Estrai sottotitoli' }}
           </button>
         </div>
         
-        <div v-else class="subtitles-list">
-          <!-- Mostriamo i sottotitoli tradotti -->
-          <div v-for="(subtitle, index) in subtitles" :key="index" class="subtitle-item">
+        <div v-else-if="translatedSubtitles.length" class="subtitles-list">
+          <div v-if="isExample" class="example-note">
+            <p>Nota: Questi sono sottotitoli di esempio. L'estrazione dei sottotitoli reali sarà disponibile presto.</p>
+          </div>
+          
+          <!-- Mostriamo i sottotitoli originali e tradotti -->
+          <div v-for="(subtitle, index) in translatedSubtitles" :key="index" class="subtitle-item">
             <div class="subtitle-time">{{ formatTime(subtitle.start) }} - {{ formatTime(subtitle.end) }}</div>
-            <div class="subtitle-text">{{ subtitle.text }}</div>
+            <div v-if="targetLanguage !== sourceLanguage" class="subtitle-original">{{ originalSubtitles[index]?.text }}</div>
+            <div class="subtitle-translated">{{ subtitle.text }}</div>
           </div>
           
           <div class="download-container">
@@ -71,6 +77,8 @@
 </template>
 
 <script>
+import subtitlesService from '@/services/subtitlesService';
+
 export default {
   name: 'HomeView',
   data() {
@@ -79,22 +87,22 @@ export default {
       videoId: null,
       error: null,
       loading: false,
+      subtitlesLoading: false,
+      extractingSubtitles: false,
+      originalSubtitles: [],
+      translatedSubtitles: [],
       subtitles: [],
       targetLanguage: 'it', // Default: italiano
+      sourceLanguage: 'auto', // Sarà aggiornato quando estraiamo i sottotitoli
+      isExample: false, // Indica se stiamo mostrando sottotitoli di esempio
       languages: {
         'en': 'Inglese',
         'es': 'Spagnolo',
         'it': 'Italiano',
         'fr': 'Francese',
-        'de': 'Tedesco'
+        'de': 'Tedesco',
+        'auto': 'Rilevato'
       },
-      // Sottotitoli originali (in italiano)
-      originalItalianSubtitles: [
-        { start: 0, end: 5, text: "Questi sono sottotitoli di esempio." },
-        { start: 6, end: 10, text: "Nella versione finale verranno estratti dal video." },
-        { start: 11, end: 15, text: "" }, // Verrà popolato con l'ID video
-        { start: 16, end: 20, text: "Grazie per aver provato AutoTranslate Pro!" }
-      ],
       // Traduzioni predefinite
       translationMap: {
         'en': {
@@ -146,66 +154,96 @@ export default {
       }
       
       this.videoId = videoId;
+      this.originalSubtitles = [];
+      this.translatedSubtitles = [];
       this.subtitles = [];
     },
     
-    // Estrae i sottotitoli di esempio e li traduce se necessario
-    extractSubtitles() {
-      this.loading = true;
+    // Estrae i sottotitoli dal video
+    async extractSubtitles() {
+      this.extractingSubtitles = true;
+      this.subtitlesLoading = true;
+      this.error = null;
       
-      // Simula una chiamata API con un ritardo
-      setTimeout(() => {
-        // Crea una copia dei sottotitoli originali
-        const subtitlesWithId = JSON.parse(JSON.stringify(this.originalItalianSubtitles));
+      try {
+        // Chiamiamo il servizio di estrazione sottotitoli
+        const result = await subtitlesService.fetchSubtitles(this.videoId);
         
-        // Aggiunge l'ID video al terzo sottotitolo
-        subtitlesWithId[2].text = `Questo è il video con ID: ${this.videoId}`;
+        // Salviamo i sottotitoli originali
+        this.originalSubtitles = [...result.subtitles];
+        this.sourceLanguage = result.language;
+        this.isExample = result.isExample;
         
-        // Se italiano, usa i sottotitoli originali
-        if (this.targetLanguage === 'it') {
-          this.subtitles = subtitlesWithId;
+        // Traduciamo i sottotitoli se necessario
+        if (this.targetLanguage !== this.sourceLanguage) {
+          this.translatedSubtitles = this.translateSubtitles(result.subtitles, this.targetLanguage);
         } else {
-          // Altrimenti, traduci
-          this.subtitles = this.translateToLanguage(subtitlesWithId, this.targetLanguage);
+          this.translatedSubtitles = [...result.subtitles];
         }
         
-        this.loading = false;
-      }, 1000);
-    },
-    
-    // Cambia lingua e traduce i sottotitoli
-    changeLanguage() {
-      if (this.subtitles.length > 0) {
-        this.loading = true;
-        
-        // Simula una chiamata API con un ritardo
-        setTimeout(() => {
-          // Se italiano, usa i sottotitoli originali
-          if (this.targetLanguage === 'it') {
-            // Ricrea i sottotitoli originali
-            const subtitlesWithId = JSON.parse(JSON.stringify(this.originalItalianSubtitles));
-            subtitlesWithId[2].text = `Questo è il video con ID: ${this.videoId}`;
-            this.subtitles = subtitlesWithId;
-          } else {
-            // Altrimenti, traduci
-            // Ricrea i sottotitoli originali
-            const subtitlesWithId = JSON.parse(JSON.stringify(this.originalItalianSubtitles));
-            subtitlesWithId[2].text = `Questo è il video con ID: ${this.videoId}`;
-            
-            this.subtitles = this.translateToLanguage(subtitlesWithId, this.targetLanguage);
-          }
-          
-          this.loading = false;
-        }, 800);
+        this.subtitles = this.translatedSubtitles;
+      } catch (err) {
+        this.error = 'Errore nell\'estrazione sottotitoli: ' + err.message;
+        this.originalSubtitles = [];
+        this.translatedSubtitles = [];
+      } finally {
+        this.extractingSubtitles = false;
+        this.subtitlesLoading = false;
       }
     },
     
-    // Traduce i sottotitoli nella lingua specificata
-    translateToLanguage(subtitles, targetLang) {
-      // Copia profonda per evitare riferimenti
+    // Cambia la lingua dei sottotitoli
+    changeLanguage() {
+      if (this.originalSubtitles.length > 0) {
+        this.subtitlesLoading = true;
+        
+        setTimeout(() => {
+          if (this.targetLanguage === this.sourceLanguage) {
+            // Se la lingua target è uguale alla lingua source, usa i sottotitoli originali
+            this.translatedSubtitles = [...this.originalSubtitles];
+          } else {
+            // Altrimenti, traduci
+            this.translatedSubtitles = this.translateSubtitles(this.originalSubtitles, this.targetLanguage);
+          }
+          
+          this.subtitles = this.translatedSubtitles;
+          this.subtitlesLoading = false;
+        }, 300);
+      }
+    },
+    
+    // Traduce i sottotitoli
+    translateSubtitles(subtitles, targetLang) {
+      // Per ora, usiamo le traduzioni predefinite per i sottotitoli di esempio
+      // In una versione futura, integreremo un servizio di traduzione reale
+      if (this.isExample) {
+        return this.translateExampleSubtitles(subtitles, targetLang);
+      }
+      
+      // Per i sottotitoli reali, facciamo una copia e aggiungiamo un prefisso per simulare la traduzione
+      // In una versione futura, questo sarà sostituito da un servizio di traduzione reale
       const translated = JSON.parse(JSON.stringify(subtitles));
       
-      // Traduce ciascun sottotitolo
+      // Prefisso per simulare la traduzione
+      const prefixes = {
+        'en': '[EN] ',
+        'es': '[ES] ',
+        'fr': '[FR] ',
+        'de': '[DE] ',
+      };
+      
+      // Aggiungi il prefisso a ciascun sottotitolo
+      translated.forEach(sub => {
+        sub.text = prefixes[targetLang] + sub.text;
+      });
+      
+      return translated;
+    },
+    
+    // Traduce sottotitoli di esempio usando il dizionario predefinito
+    translateExampleSubtitles(subtitles, targetLang) {
+      const translated = JSON.parse(JSON.stringify(subtitles));
+      
       for (let i = 0; i < translated.length; i++) {
         const originalText = translated[i].text;
         
@@ -232,10 +270,10 @@ export default {
     
     // Scarica i sottotitoli in formato SRT
     downloadSubtitles() {
-      if (!this.subtitles.length) return;
+      if (!this.translatedSubtitles.length) return;
       
       let content = '';
-      this.subtitles.forEach((subtitle, index) => {
+      this.translatedSubtitles.forEach((subtitle, index) => {
         content += `${index + 1}\n`;
         content += `${this.formatTime(subtitle.start)} --> ${this.formatTime(subtitle.end)}\n`;
         content += `${subtitle.text}\n\n`;
@@ -334,6 +372,21 @@ iframe {
   padding: 20px;
 }
 
+.loading-spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top-color: #4CAF50;
+  animation: spin 1s ease-in-out infinite;
+  margin: 10px auto;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .subtitle-item {
   margin-bottom: 15px;
   padding-bottom: 10px;
@@ -346,7 +399,13 @@ iframe {
   margin-bottom: 5px;
 }
 
-.subtitle-text {
+.subtitle-original {
+  margin-bottom: 5px;
+  font-style: italic;
+  color: #666;
+}
+
+.subtitle-translated {
   font-weight: bold;
 }
 
@@ -363,5 +422,13 @@ iframe {
 .cta-container {
   text-align: center;
   padding: 20px;
+}
+
+.example-note {
+  background-color: #fffde7;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  border-left: 3px solid #fbc02d;
 }
 </style>
